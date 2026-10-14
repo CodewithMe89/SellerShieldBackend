@@ -18,10 +18,17 @@ const insightsRoutes = require("./routes/insightsRoutes");
 
 const app = express();
 
-app.use(cors({
-    origin: "*",
-    credentials:true,
-}));
+app.use(
+    cors({
+        origin: [
+            "http://localhost:5173",
+            "https://seller-shield-frontend.vercel.app",
+        ],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+    })
+);
+
 app.use(express.json());
 
 //database

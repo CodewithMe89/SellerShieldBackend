@@ -110,7 +110,7 @@ const calculateExpenseBreakdown = async(sellerId) => {
 
 
 const calculateProductProfit = async (sellerId) => {
-    //Get only delivered Orders
+    // Get only delivered Orders
     const orders = await Order.find({
         seller: sellerId,
         orderStatus: "Delivered",
@@ -119,29 +119,29 @@ const calculateProductProfit = async (sellerId) => {
     const productMap = {};
 
     orders.forEach((order) => {
+        // Skip orders where productId was deleted or null
+        if (!order.productId) return;
+
         const productId = order.productId._id.toString();
 
         if (!productMap[productId]) {
             productMap[productId] = {
                 productId: order.productId._id,
-                productName: order.productId.name,
-                sku: order.productId.sku,
-                category: order.productId.category,
+                productName: order.productId.name || "Unknown Product",
+                sku: order.productId.sku || "N/A",
+                category: order.productId.category || "Uncategorized",
                 quantitySold: 0,
                 revenue: 0,
                 productCost: 0,
-            }
+            };
         }
 
-        productMap[productId].quantitySold += order.quantity;
-
-        productMap[productId].revenue += order.sellingPriceSnapshot * order.quantity;
-
-        productMap[productId].productCost += order.costPriceSnapshot * order.quantity;
-
+        productMap[productId].quantitySold += order.quantity || 0;
+        productMap[productId].revenue += (order.sellingPriceSnapshot || 0) * (order.quantity || 0);
+        productMap[productId].productCost += (order.costPriceSnapshot || 0) * (order.quantity || 0);
     });
 
-    //Convert object into array and calculate Profits
+    // Convert object into array and calculate Profits
     const productProfit = Object.values(productMap).map((product) => {
         const profit = product.revenue - product.productCost;
 
@@ -153,11 +153,11 @@ const calculateProductProfit = async (sellerId) => {
             ...product,
             profit,
             margin: Number(margin.toFixed(2))
-
-        }
+        };
     });
-    return productProfit
-}
+
+    return productProfit;
+};
 
 //Caluclate returns analytics
 const calculateReturnAnalytics = async(sellerId) =>{

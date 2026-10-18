@@ -76,20 +76,23 @@ router.get("/returns", protect, async (req, res) => {
     }
 })
 
-router.get("/summary", protect, async (req, res) => {
-    try {
-        const summary = await getProfitSummary(req.userId);
 
-        res.status(200).json({
-            message:"Profit summary calculated successfully",
-            summary,
-        })
-    }catch(err){
-        res.status(500).json({
-            message:"Server failed",
-            err:err.message
-        })
-    }
-    
-})
+router.get("/summary", protect, async (req, res) => {
+  try {
+    const summary = await getProfitSummary(req.userId);
+
+    return res.status(200).json({
+      message: "Profit summary calculated successfully",
+      summary,
+    });
+  } catch (err) {
+    console.error("GET /api/profit/summary failed:", err);
+
+    return res.status(500).json({
+      message: "Failed to calculate profit summary",
+      error: err.message,
+    });
+  }
+});
+
 module.exports = router;

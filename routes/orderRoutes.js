@@ -199,8 +199,8 @@ router.put('/:id', protect, async (req, res) => {
         }
         const newStatus = orderStatus !== undefined ? orderStatus : oldStatus;
 
-        const oldAffectsStock = oldStatus !== "Cancelled";
-        const newAffectsStock = newStatus !== "Cancelled";
+        const oldAffectsStock = !["Cancelled","Returned"].includes(oldStatus);
+        const newAffectsStock = !["Cancelled","Returned"].includes(newStatus);
 
         if (oldAffectsStock && newAffectsStock) {
             const difference = newQuantity - oldQuantity;
@@ -211,13 +211,14 @@ router.put('/:id', protect, async (req, res) => {
                         message: "Insufficient stock for updated quantity"
                     });
                 }
+
                 product.stock -= difference;
             }
-            if (difference < 0) {
+            else if (difference < 0) {
                 product.stock += Math.abs(difference)
             }
         }
-
+        
         if (oldAffectsStock && !newAffectsStock) {
             product.stock += oldQuantity;
         }

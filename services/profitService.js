@@ -1,55 +1,77 @@
-const Order = require('../models/Order');
-const Expense = require('../models/Expense');
-const Return = require('../models/Return');
 
-const calculateProfit = async (sellerId) => {
-    // 1. Get delivered Orders
-    const orders = await Order.find({
+const Order = require("../models/Order");
+const Expense = require("../models/Expense");
+const Return = require("../models/Return");
+
+// Only these orders represent sales that were actually delivered
+// or subsequently returned. Cancelled orders are excluded.
+const getRelevantOrders = (sellerId) =>
+    Order.find({
         seller: sellerId,
-        orderStatus: "Delivered",
-    })
+        orderStatus: { $in: ["Delivered", "Returned"] },
+    });
 
-    //2. Calculate revenue and product cost
-    let revenue = 0;
-    let productCost = 0;
-
-    orders.forEach((order) => {
-        revenue += order.sellingPriceSnapshot * order.quantity;
-
-        productCost += order.costPriceSnapshot * order.quantity;
-    })
-
-    //3. Get all expenses
-    const expenses = await Expense.find({
-        seller: sellerId,
-    })
-
-    let totalExpenses = 0;
-
-    expenses.forEach((expense) => {
-        totalExpenses += expense.amount;
-    })
-
-    //4. Get completed Returns
-    const returns = await Return.find({
+// Returns that have actually been completed and received
+const getCompletedReturns = (sellerId) =>
+    Return.find({
         seller: sellerId,
         returnStatus: "Completed",
-    })
+    });
 
-    let returnCost = 0;
+const calculateProfit = async (sellerId) => {
+    const [orders, expenses, returns] = await Promise.all([
+        getRelevantOrders(sellerId),
+        Expense.find({ seller: sellerId }),
+        getCompletedReturns(sellerId),
+    ]);
+
+    // Total completed return quantity for each order
+    const returnedByOrder = new Map();
 
     returns.forEach((item) => {
-        returnCost += item.returnCost
-    })
+        const orderId = item.order.toString();
 
-    //5. calculate gross profit
+        returnedByOrder.set(
+            orderId,
+            (returnedByOrder.get(orderId) || 0) + item.quantity
+        );
+    });
+
+    let revenue = 0;
+    let productCost = 0;
+    let totalExpenses = 0;
+
+    orders.forEach((order) => {
+        const returnedQuantity =
+            returnedByOrder.get(order._id.toString()) || 0;
+
+        const retainedQuantity = Math.max(
+            0,
+            order.quantity - returnedQuantity
+        );
+
+        revenue +=
+            (order.sellingPriceSnapshot || 0) * retainedQuantity;
+
+        productCost +=
+            (order.costPriceSnapshot || 0) * retainedQuantity;
+    });
+
+    expenses.forEach((expense) => {
+        totalExpenses += expense.amount || 0;
+    });
+
+    // Return cost is counted once per completed return record
+    const returnCost = returns.reduce(
+        (total, item) => total + (item.returnCost || 0),
+        0
+    );
+
     const grossProfit = revenue - productCost;
-
-    //6. calculate net profit
     const netProfit = grossProfit - totalExpenses - returnCost;
 
-    //7. Calculate Profit Margin
-    const profitMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+    const profitMargin =
+        revenue > 0 ? (netProfit / revenue) * 100 : 0;
 
     return {
         revenue,
@@ -59,18 +81,18 @@ const calculateProfit = async (sellerId) => {
         grossProfit,
         netProfit,
         profitMargin: Number(profitMargin.toFixed(2)),
-        deliveredOrders: orders.length,
+        deliveredOrders: orders.filter(
+            (order) => order.orderStatus === "Delivered"
+        ).length,
         completedReturns: returns.length,
     };
 };
 
-const calculateExpenseBreakdown = async(sellerId) => {
-    const expenses = await Expense.find({
-        seller:sellerId,
-    }) 
+const calculateExpenseBreakdown = async (sellerId) => {
+    const expenses = await Expense.find({ seller: sellerId });
 
     const expenseBreakdown = {
-        platformFee : 0,
+        platformFee: 0,
         shipping: 0,
         advertising: 0,
         packaging: 0,
@@ -79,17 +101,17 @@ const calculateExpenseBreakdown = async(sellerId) => {
     };
 
     expenses.forEach((expense) => {
-        switch(expense.type){
-            case "Platform Fee" :
+        switch (expense.type) {
+            case "Platform Fee":
                 expenseBreakdown.platformFee += expense.amount;
                 break;
-            case "Shipping" :
+            case "Shipping":
                 expenseBreakdown.shipping += expense.amount;
                 break;
             case "Advertising":
                 expenseBreakdown.advertising += expense.amount;
                 break;
-            case "Packaging" :
+            case "Packaging":
                 expenseBreakdown.packaging += expense.amount;
                 break;
             case "Other":
@@ -98,31 +120,50 @@ const calculateExpenseBreakdown = async(sellerId) => {
         }
     });
 
-    expenseBreakdown.total = 
-    expenseBreakdown.platformFee +
-    expenseBreakdown.shipping +
-    expenseBreakdown.advertising +
-    expenseBreakdown.packaging +
-    expenseBreakdown.other;
+    expenseBreakdown.total =
+        expenseBreakdown.platformFee +
+        expenseBreakdown.shipping +
+        expenseBreakdown.advertising +
+        expenseBreakdown.packaging +
+        expenseBreakdown.other;
 
     return expenseBreakdown;
-}
-
+};
 
 const calculateProductProfit = async (sellerId) => {
-    // Get only delivered Orders
-    const orders = await Order.find({
-        seller: sellerId,
-        orderStatus: "Delivered",
-    }).populate("productId", "name sku category");
+    const [orders, returns] = await Promise.all([
+        getRelevantOrders(sellerId).populate(
+            "productId",
+            "name sku category"
+        ),
+        getCompletedReturns(sellerId),
+    ]);
+
+    const returnedByOrder = new Map();
+
+    returns.forEach((item) => {
+        const orderId = item.order.toString();
+
+        returnedByOrder.set(
+            orderId,
+            (returnedByOrder.get(orderId) || 0) + item.quantity
+        );
+    });
 
     const productMap = {};
 
     orders.forEach((order) => {
-        // Skip orders where productId was deleted or null
         if (!order.productId) return;
 
         const productId = order.productId._id.toString();
+
+        const returnedQuantity =
+            returnedByOrder.get(order._id.toString()) || 0;
+
+        const retainedQuantity = Math.max(
+            0,
+            order.quantity - returnedQuantity
+        );
 
         if (!productMap[productId]) {
             productMap[productId] = {
@@ -131,135 +172,129 @@ const calculateProductProfit = async (sellerId) => {
                 sku: order.productId.sku || "N/A",
                 category: order.productId.category || "Uncategorized",
                 quantitySold: 0,
+                returnedQuantity: 0,
                 revenue: 0,
                 productCost: 0,
             };
         }
 
-        productMap[productId].quantitySold += order.quantity || 0;
-        productMap[productId].revenue += (order.sellingPriceSnapshot || 0) * (order.quantity || 0);
-        productMap[productId].productCost += (order.costPriceSnapshot || 0) * (order.quantity || 0);
+        const product = productMap[productId];
+
+        product.quantitySold += retainedQuantity;
+        product.returnedQuantity += returnedQuantity;
+
+        product.revenue +=
+            (order.sellingPriceSnapshot || 0) * retainedQuantity;
+
+        product.productCost +=
+            (order.costPriceSnapshot || 0) * retainedQuantity;
     });
 
-    // Convert object into array and calculate Profits
-    const productProfit = Object.values(productMap).map((product) => {
+    return Object.values(productMap).map((product) => {
         const profit = product.revenue - product.productCost;
 
-        const margin = product.revenue > 0
-            ? (profit / product.revenue) * 100
-            : 0;
+        const margin =
+            product.revenue > 0
+                ? (profit / product.revenue) * 100
+                : 0;
 
         return {
             ...product,
             profit,
-            margin: Number(margin.toFixed(2))
+            margin: Number(margin.toFixed(2)),
         };
     });
-
-    return productProfit;
 };
 
-//Caluclate returns analytics
-const calculateReturnAnalytics = async(sellerId) =>{
-    const returns = await Return.find({
-        seller:sellerId
-    });
+const calculateReturnAnalytics = async (sellerId) => {
+    const [returns, orders] = await Promise.all([
+        Return.find({ seller: sellerId }),
+        getRelevantOrders(sellerId),
+    ]);
 
-    //get delivered orders
-    const deliveredOrders = await Order.find({
-        seller:sellerId,
-        orderStatus:"Delivered",
-    });
+    // Denominator: total units in delivered/returned orders
+    const soldQuantity = orders.reduce(
+        (total, order) => total + order.quantity,
+        0
+    );
 
-    let returnedQuantity = 0;
+    // Only completed returns count as physically returned units
+    const completedReturns = returns.filter(
+        (item) => item.returnStatus === "Completed"
+    );
 
-    returns.forEach((item) => {
-        if(
-            item.returnStatus == "Approved" ||
-            item.returnStatus == "Completed"
-        ){
-            returnedQuantity += item.quantity;
-        }
-    });
+    const returnedQuantity = completedReturns.reduce(
+        (total, item) => total + item.quantity,
+        0
+    );
 
-    let soldQuantity = 0;
-
-    deliveredOrders.forEach((order) => {
-        soldQuantity += order.quantity;
-    })
-
-    //Return rate
-
-    const returnRate = 
-    soldQuantity > 0
-    ? (returnedQuantity / soldQuantity) * 100
-    : 0;
+    const returnRate =
+        soldQuantity > 0
+            ? (returnedQuantity / soldQuantity) * 100
+            : 0;
 
     const reasonBreakdown = {};
 
     returns.forEach((item) => {
-        if(item.returnStatus === "Approved" ||
+        if (
+            item.returnStatus === "Approved" ||
             item.returnStatus === "Completed"
-        ){
-            if(!reasonBreakdown[item.reason]){
-                reasonBreakdown[item.reason] = 0;
-            }
-
-            reasonBreakdown[item.reason] += item.quantity;
+        ) {
+            reasonBreakdown[item.reason] =
+                (reasonBreakdown[item.reason] || 0) + item.quantity;
         }
     });
 
-    let completedReturnCost = 0;
-    returns.forEach((item) => {
-        if(item.returnStatus === "Completed"){
-            completedReturnCost += item.returnCost;
-        }
-    });
-
-    return{
-        soldQuantity,
-        returnedQuantity,
-        returnRate : Number(returnRate.toFixed(2)),
-        completedReturnCost,
-        reasonBreakdown,
-    }
-
-}
-
-const getProfitSummary = async(sellerId) => {
-    const profit = await calculateProfit(sellerId);
-
-    const productProfit = await calculateProductProfit(sellerId);
-    
-    const expenses = await calculateExpenseBreakdown(sellerId);
-
-    const returns = await calculateReturnAnalytics(sellerId);
+    const completedReturnCost = completedReturns.reduce(
+        (total, item) => total + (item.returnCost || 0),
+        0
+    );
 
     return {
-        overview:{
+        soldQuantity,
+        returnedQuantity,
+        returnRate: Number(returnRate.toFixed(2)),
+        completedReturnCost,
+        reasonBreakdown,
+    };
+};
+
+const getProfitSummary = async (sellerId) => {
+    const [
+        profit,
+        productProfit,
+        expenses,
+        returns,
+    ] = await Promise.all([
+        calculateProfit(sellerId),
+        calculateProductProfit(sellerId),
+        calculateExpenseBreakdown(sellerId),
+        calculateReturnAnalytics(sellerId),
+    ]);
+
+    return {
+        overview: {
             revenue: profit.revenue,
             productCost: profit.productCost,
             grossProfit: profit.grossProfit,
             totalExpenses: profit.totalExpenses,
             returnCost: profit.returnCost,
             netProfit: profit.netProfit,
-            profitMargin: profit.profitMargin
+            profitMargin: profit.profitMargin,
         },
-
-        orders:{
-            deliveredOrders:profit.deliveredOrders
+        orders: {
+            deliveredOrders: profit.deliveredOrders,
         },
-
         expenses,
-
         returns,
-
         productProfit,
-    }
-}
-module.exports = { calculateProfit,
-    calculateExpenseBreakdown,
-    calculateProductProfit, 
-    calculateReturnAnalytics,
-    getProfitSummary };
+    };
+};
 
+module.exports = {
+    calculateProfit,
+    calculateExpenseBreakdown,
+    calculateProductProfit,
+    calculateReturnAnalytics,
+    getProfitSummary,
+};

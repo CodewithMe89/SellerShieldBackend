@@ -41,7 +41,7 @@ const generateInsights = async (sellerId) => {
                 severity: "medium",
                 title: "Low stock",
                 message: `${product.name} is running low on stock`,
-                product: product._id
+                productId: product._id
             });
         }
     });
@@ -137,7 +137,7 @@ const generateInsights = async (sellerId) => {
             type: "expense",
             severity: "medium",
             title: "High Advertising Expense",
-            message: "No major issues detected in your current business data",
+            message: `Your advertising expenses are ₹${advertisingExpense.toFixed(2)}. Review your advertising spend and its return.`,
         });
     }
     //5. High expense ratio insight

@@ -29,7 +29,7 @@ router.post('/', protect, async (req, res) => {
     } catch (err) {
         res.status(500).json({
             message: "Server error",
-            err: err.messagge,
+            err: err.message,
         })
     }
 })
